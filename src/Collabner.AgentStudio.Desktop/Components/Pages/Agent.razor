@@ -1,0 +1,465 @@
+@* Copyright © 2026 Collabner. All rights reserved. *@
+
+@page "/agent"
+@rendermode InteractiveServer
+@implements IDisposable
+@using Collabner.AgentStudio.Agent
+@using Collabner.AgentStudio.Desktop.Services
+@inject AgentRunState State
+
+<h1>Agent</h1>
+
+<div class="agent-page">
+    <aside class="agent-config-panel">
+        <div class="config-box">
+            <div class="field">
+                <label>System prompt: tools &amp; skill use</label>
+                <textarea class="prompt-input" rows="8" @bind="State.ToolSkillPrompt" @bind:event="oninput"
+                          placeholder="The tool and skill selection & usage sections of systemprompt.md load here. Edit and Save to update them."></textarea>
+                <span class="field-hint muted">
+                    @if (State.SystemPromptDirty)
+                    {
+                        <text>Unsaved — click Save to update systemprompt.md and apply on the next run.</text>
+                    }
+                    else if (State.SystemPromptOverride)
+                    {
+                        <text>Saved — these sections are part of the prompt that replaces Copilot's built-in one on each run.</text>
+                    }
+                    else
+                    {
+                        <text>Using Copilot's built-in prompt. Edit and Save to override it.</text>
+                    }
+                </span>
+            </div>
+            <div class="field">
+                <label>Tool Reasoning</label>
+                <textarea class="prompt-input" rows="4" @bind="State.ToolReasoning" @bind:event="oninput"
+                          placeholder="Reasoning instructions to append to the system prompt when Append is enabled."></textarea>
+                <label class="checkbox">
+                    <input type="checkbox" @bind="State.AppendToolReasoning" />
+                    Append to system prompt
+                </label>
+            </div>
+            <div class="prompt-actions">
+                <button class="btn primary" @onclick="State.SaveSystemPromptAsync" disabled="@(!State.SystemPromptDirty)">Save</button>
+            </div>
+        </div>
+
+        <div class="config-box">
+            <div class="field">
+                <div class="mcp-servers-head">
+                    <label>Skills</label>
+                    <button class="btn btn-xs" @onclick="State.LoadSkillsAsync"
+                            disabled="@(State.IsLoadingSkills || string.IsNullOrWhiteSpace(State.SkillsDirectory))">
+                        @(State.IsLoadingSkills ? "Loading…" : "Reload")
+                    </button>
+                    @if (State.IsLoadingSkills)
+                    {
+                        <span class="status">Scanning skills…</span>
+                    }
+                    else if (State.Skills.Count == 0 && State.SkillsError is null)
+                    {
+                        <span class="status muted">No skills loaded — set a skills directory on the <a href="/">Project</a> tab.</span>
+                    }
+                </div>
+                @if (State.SkillsError is not null)
+                {
+                    <div class="error">@State.SkillsError</div>
+                }
+                @foreach (var skill in State.Skills)
+                {
+                    <div class="skill-item">
+                        <div class="skill-head">
+                            <code class="skill-name">@skill.Name</code>
+                            <button class="btn btn-xs" @onclick="() => State.RunSkillAsync(skill)"
+                                    disabled="@(State.IsRunning || !State.IsSkillEnabled(skill.Name))">Run</button>
+                            <label class="skill-toggle">
+                                <input type="checkbox" checked="@State.IsSkillEnabled(skill.Name)"
+                                       @onchange="e => State.SetSkillEnabledAsync(skill.Name, (bool)e.Value!)" />
+                                <span>@(State.IsSkillEnabled(skill.Name) ? "On" : "Off")</span>
+                            </label>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(skill.Description))
+                        {
+                            <div class="skill-desc muted">@skill.Description</div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </aside>
+
+    <section class="agent-main">
+        <div class="chat">
+            <div class="chat-history">
+                @if (State.Chat.Count == 0)
+                {
+                    <p class="muted chat-empty">Send a message to start a conversation with the agent.</p>
+                }
+                else
+                {
+                    @foreach (var msg in State.Chat)
+                    {
+                        @if (msg.IsSessionDivider)
+                        {
+                            <div class="session-break"><span>@msg.Text</span></div>
+                        }
+                        else
+                        {
+                            <div class="chat-msg @msg.Role.ToString().ToLowerInvariant() @(msg.IsError ? "error" : null)">@msg.Text</div>
+                        }
+                    }
+                    @if (State.IsRunning)
+                    {
+                        <div class="chat-msg assistant thinking muted">Thinking…</div>
+                    }
+                }
+            </div>
+
+            <div class="chat-composer">
+                <textarea class="prompt-input" rows="2" @bind="State.Prompt" @bind:event="oninput"
+                          placeholder="Ask the agent to do something…"></textarea>
+                <div class="chat-composer-actions">
+                    <button class="btn primary" @onclick="State.StartRunAsync" disabled="@(State.IsRunning || string.IsNullOrWhiteSpace(State.Prompt))">
+                        @(State.IsRunning ? "Running…" : "Send")
+                    </button>
+                    @if (State.IsRunning)
+                    {
+                        <button class="btn" @onclick="State.CancelRun">Cancel</button>
+                    }
+                    else
+                    {
+                        <button class="btn" @onclick="State.StartNewSessionAsync" disabled="@(!State.HasSession && State.Recorder.Events.Count == 0)">New session</button>
+                        <button class="btn" @onclick="State.ClearChatAsync" disabled="@(State.Chat.Count == 0 && !State.HasSession)">Clear</button>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <hr class="section-divider" />
+
+        <div class="model-bar">
+            <label>Model</label>
+            <select class="path-input" @bind="State.SelectedModelId" disabled="@(State.IsRunning || State.IsLoadingModels || State.Models.Count == 0)">
+                @foreach (var model in State.Models)
+                {
+                    var name = string.IsNullOrWhiteSpace(model.Name) ? model.Id : model.Name;
+                    <option value="@model.Id">@(model.Id == State.DefaultModelId ? $"{name} (default)" : name)</option>
+                }
+            </select>
+            <label>Reasoning effort</label>
+            <select class="path-input" @bind="State.ReasoningEffort" disabled="@State.IsRunning">
+                <option value="">Model default</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">Extra high</option>
+            </select>
+            <button class="btn" @onclick="State.SaveModelAsync" disabled="@(!State.ModelDirty || State.IsRunning)">Save</button>
+            @if (State.IsLoadingModels)
+            {
+                <span class="muted">Loading models…</span>
+            }
+        </div>
+
+        <div class="session-status">
+            @if (State.HasSession)
+            {
+                <span class="chip ok" title="Follow-up prompts continue this session. A new session starts automatically when the model, system prompt, tools, or reasoning change.">
+                    <span class="session-dot"></span>
+                    Session active
+                    <span class="chip-count">@State.SessionTurns turn@(State.SessionTurns == 1 ? "" : "s")</span>
+                </span>
+                @if (!string.IsNullOrEmpty(State.SessionId))
+                {
+                    <code class="session-id" title="Copilot session id">@State.SessionId</code>
+                }
+                <span class="muted">@(State.LastRunReusedSession ? "reused for the last prompt" : "new session created for the last prompt")</span>
+            }
+            else
+            {
+                <span class="chip">
+                    <span class="session-dot off"></span>
+                    No session yet — the next prompt starts one
+                </span>
+            }
+        </div>
+
+        <div class="field field-inline">
+            <label class="checkbox">
+                <input type="checkbox" @bind="State.BreakOnToolCall" />
+                Break before each tool call
+            </label>
+            <label class="checkbox">
+                <input type="checkbox" @bind="State.BreakOnSkill" />
+                Break before each skill call
+            </label>
+        </div>
+
+        <div class="session-events">
+            @if (State.SkillGate.Queue.Count > 0)
+            {
+                <div class="gate-panel">
+                    <div class="gate-title">Paused — skill call awaiting your decision</div>
+                    @foreach (var call in State.SkillGate.Queue)
+                    {
+                        <div class="gate-call">
+                            <div class="gate-name">@call.SkillName <span class="muted">(skill)</span></div>
+                            <pre class="wire-body">@call.ArgumentsJson</pre>
+                            <div class="gate-actions">
+                                <button class="btn primary" @onclick="() => State.AllowSkill(call.Id)">Run skill</button>
+                                <button class="btn" @onclick="() => State.BlockSkill(call.Id)">Block</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+            @if (State.Gate.Queue.Count > 0)
+            {
+                <div class="gate-panel">
+                    <div class="gate-title">Paused — tool call awaiting your decision</div>
+                    @foreach (var call in State.Gate.Queue)
+                    {
+                        <div class="gate-call">
+                            <div class="gate-name">@call.DisplayName <span class="muted">(@call.ServerName)</span></div>
+                            <pre class="wire-body">@call.ArgumentsJson</pre>
+                            <div class="gate-actions">
+                                <button class="btn primary" @onclick="() => State.Continue(call.Id)">Run for real</button>
+                                <button class="btn" @onclick="() => State.Abort(call.Id)">Abort</button>
+                            </div>
+                            <details class="gate-manual">
+                                <summary>Return a value manually</summary>
+                                <textarea class="prompt-input" rows="3"
+                                          value="@GetManual(call.Id)"
+                                          @onchange="e => SetManual(call.Id, e.Value?.ToString())"
+                                          placeholder="Text or JSON returned to the agent instead of calling the server"></textarea>
+                                <button class="btn" @onclick="() => SubmitManual(call.Id)">Return manually</button>
+                            </details>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="timeline-title muted">
+                <span>Session events</span>
+            </div>
+            @if (State.Recorder.Events.Count == 0)
+            {
+                <p class="muted">Run the agent to see exactly what is sent to the model.</p>
+            }
+            else
+            {
+                @foreach (var evt in State.Recorder.Events.Where(e => e.Kind != AgentEventKind.SystemPrompt))
+                {
+                    <div class="event event-@evt.Kind.ToString().ToLowerInvariant()">
+                        <div class="event-head">
+                            <span class="event-kind">@Label(evt.Kind)</span>
+                            <span class="event-time muted">@evt.Timestamp.ToString("HH:mm:ss.fff")</span>
+                        </div>
+                        <div class="event-summary">@evt.Summary</div>
+                        @if (evt.Detail is not null)
+                        {
+                            <details class="event-detail">
+                                <summary>payload</summary>
+                                <pre class="wire-body">@evt.Detail</pre>
+                            </details>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    </section>
+
+    <aside class="agent-tools-panel">
+        <div class="config-box">
+            <div class="field">
+                <div class="mcp-servers-head">
+                    <label>MCP servers</label>
+                    <button class="btn btn-xs" @onclick="State.LoadServersAsync"
+                            disabled="@(State.IsLoadingServers || string.IsNullOrWhiteSpace(State.McpConfigPath))">
+                        @(State.IsLoadingServers ? "Loading…" : "Reload")
+                    </button>
+                    @if (State.IsLoadingServers)
+                    {
+                        <span class="status">Connecting to servers…</span>
+                    }
+                    else if (State.Servers.Count == 0)
+                    {
+                        <span class="status muted">No servers loaded — load from <a href="/settings">Settings</a>.</span>
+                    }
+                </div>
+                @if (State.LoadError is not null)
+                {
+                    <div class="error">@State.LoadError</div>
+                }
+                @if (State.Servers.Count > 0)
+                {
+                    <div class="server-chips">
+                        @foreach (var server in State.Servers)
+                        {
+                            @if (server.IsConnected)
+                            {
+                                <button type="button"
+                                        class="chip ok @(serverFilter == server.Name ? "selected" : null)"
+                                        title="@(serverFilter == server.Name ? "Click to show all tools" : "Click to show only this server's tools")"
+                                        @onclick="() => ToggleServerFilter(server.Name)">
+                                    @server.Name
+                                    <span class="chip-count">@server.ToolCount tools</span>
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="chip bad" title="@server.Error">
+                                    @server.Name
+                                    <span class="chip-count">⚠</span>
+                                </span>
+                            }
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        @if (State.ToolEdits.Count > 0)
+        {
+            <div class="config-box">
+                <div class="field">
+                    <div class="tools-editor-head">
+                        <label>Tool definitions</label>
+                        <div class="tools-editor-actions">
+                            <button class="btn btn-xs" @onclick="State.ResetAllToolEdits" disabled="@(!State.AnyToolEdited)">Reset all</button>
+                            <button class="btn btn-xs primary" @onclick="State.RerunLastAsync" disabled="@(!State.CanRerun)">Re-run last prompt</button>
+                        </div>
+                    </div>
+                    <span class="field-hint muted">
+                        Edit a tool's advertised name, description, or parameters, then re-run to see whether the model
+                        picks the same or a different tool. Any change starts a new session; execution still calls the real tool.
+                    </span>
+                    <input class="path-input tool-search" @bind="toolSearch" @bind:event="oninput"
+                           placeholder="Search tool names and descriptions…" />
+                    @{
+                        var visibleTools = FilteredTools().ToList();
+                    }
+                    @if (serverFilter is not null || !string.IsNullOrWhiteSpace(toolSearch))
+                    {
+                        <span class="field-hint muted">
+                            Showing @visibleTools.Count of @State.ToolEdits.Count tools@(serverFilter is not null ? $" from {serverFilter}" : null).
+                            <button type="button" class="link-btn" @onclick="ClearToolFilters">Clear filters</button>
+                        </span>
+                    }
+                    @if (visibleTools.Count == 0)
+                    {
+                        <p class="muted">No tools match the current filter.</p>
+                    }
+                    @foreach (var tool in visibleTools)
+                    {
+                        <div class="tool-edit @(tool.IsModified ? "modified" : null)">
+                            <div class="tool-edit-head">
+                                <code class="muted">@tool.ServerName</code>
+                                @if (tool.IsModified)
+                                {
+                                    <span class="chip-count">modified</span>
+                                }
+                                <button class="btn btn-xs" @onclick="() => State.ResetToolEdit(tool)" disabled="@(!tool.IsModified)">Reset</button>
+                            </div>
+                            <input class="path-input" @bind="tool.Name" @bind:event="oninput" placeholder="tool name" />
+                            <textarea class="prompt-input" rows="2" @bind="tool.Description" @bind:event="oninput" placeholder="description"></textarea>
+                            <details class="tool-edit-schema">
+                                <summary>parameters (JSON schema)</summary>
+                                <textarea class="prompt-input mono" rows="6" @bind="tool.ParametersJson" @bind:event="oninput"></textarea>
+                            </details>
+                            @if (tool.Error is not null)
+                            {
+                                <div class="error">@tool.Error</div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </aside>
+</div>
+
+@code {
+    private readonly Dictionary<Guid, string?> manualValues = new();
+
+    private string? serverFilter;
+    private string toolSearch = string.Empty;
+
+    private void ToggleServerFilter(string serverName)
+        => serverFilter = serverFilter == serverName ? null : serverName;
+
+    private void ClearToolFilters()
+    {
+        serverFilter = null;
+        toolSearch = string.Empty;
+    }
+
+    private IEnumerable<ToolEditModel> FilteredTools()
+    {
+        IEnumerable<ToolEditModel> tools = State.ToolEdits;
+
+        if (serverFilter is not null)
+        {
+            tools = tools.Where(t => t.ServerName == serverFilter);
+        }
+
+        var search = toolSearch?.Trim();
+        if (!string.IsNullOrEmpty(search))
+        {
+            tools = tools.Where(t =>
+                t.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                t.Description.Contains(search, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return tools;
+    }
+
+    protected override void OnInitialized()
+        => State.Changed += OnStateChangedAsync;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        // Load models after the first render so the tab appears immediately instead of
+        // blocking on the Copilot model list network call. Skills are not scanned here;
+        // they load only when the user clicks Load on the Project page.
+        await State.LoadModelsAsync();
+    }
+
+    public void Dispose()
+        => State.Changed -= OnStateChangedAsync;
+
+    private Task OnStateChangedAsync()
+        => InvokeAsync(StateHasChanged);
+
+    private string GetManual(Guid id)
+        => manualValues.TryGetValue(id, out var value) ? value ?? string.Empty : string.Empty;
+
+    private void SetManual(Guid id, string? value)
+        => manualValues[id] = value;
+
+    private void SubmitManual(Guid id)
+    {
+        State.SubmitManual(id, GetManual(id));
+        manualValues.Remove(id);
+    }
+
+    private static string Label(AgentEventKind kind) => kind switch
+    {
+        AgentEventKind.PromptSubmitted => "PROMPT",
+        AgentEventKind.SessionInfo => "SESSION",
+        AgentEventKind.SystemPrompt => "SYSTEM",
+        AgentEventKind.RequestToModel => "→ MODEL",
+        AgentEventKind.ModelResponse => "← MODEL",
+        AgentEventKind.ToolCallRequested => "TOOL CALL",
+        AgentEventKind.ToolCallCompleted => "TOOL RESULT",
+        AgentEventKind.Error => "ERROR",
+        AgentEventKind.RunCompleted => "DONE",
+        _ => kind.ToString().ToUpperInvariant(),
+    };
+}

@@ -1,0 +1,131 @@
+# =========================
+# .NET / C#
+# =========================
+
+# Build results
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+[Dd]ebugPublic/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+
+# .NET publish output
+publish/
+[Pp]ublish/
+*.PublishSettings
+
+# MSBuild / build artifacts
+*.binlog
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# .NET Core / restore
+.dotnet/
+*.nuget.props
+*.nuget.targets
+
+# NuGet packages
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.dgspec.json
+
+# =========================
+# Visual Studio / Rider / VS Code
+# =========================
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.idea/
+*.DotSettings.user
+
+# ReSharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+
+# =========================
+# Test / coverage
+# =========================
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+TestResults/
+
+# =========================
+# Electron.NET / Node (Desktop Host)
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+
+# Electron.NET build output
+bin/Host/
+obj/Host/
+electron-builder.env
+
+# Electron packaging output
+dist/
+out/
+
+# =========================
+# OS files
+# =========================
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# =========================
+# Temporary / scratch projects
+# =========================
+tmp-*/
+tmp/
+scratch/
+
+# =========================
+# Misc / secrets
+# =========================
+*.log
+*.tmp
+*.bak
+*.cache
+*.pid
+*.seed
+appsettings.*.local.json
+secrets.json
+.env
+.env.*
+.mcp.json

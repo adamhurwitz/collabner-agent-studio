@@ -1,0 +1,103 @@
+@* Copyright © 2026 Collabner. All rights reserved. *@
+
+@page "/settings"
+@rendermode InteractiveServer
+@using Collabner.AgentStudio.Agent
+@using Collabner.AgentStudio.Desktop.Services
+@inject SettingsService SettingsService
+
+<h1>Settings</h1>
+
+<section class="settings-form">
+    <div class="settings-section">
+        <h2 class="settings-heading">GitHub Copilot</h2>
+        <div class="field">
+            <label>SDK version</label>
+            <span class="field-value"><code>GitHub.Copilot.SDK</code> @CopilotConnection.SdkVersion</span>
+        </div>
+        <div class="field">
+            <label>GitHub token (optional)</label>
+            <input class="path-input" type="password" autocomplete="off"
+                   @bind="draft.GitHubToken" @bind:event="oninput"
+                   placeholder="Leave empty to use COPILOT_GITHUB_TOKEN or your Copilot CLI account" />
+            <span class="field-hint muted">
+                When empty, the agent falls back to the <code>COPILOT_GITHUB_TOKEN</code> environment
+                variable, then to the account you are signed into with the Copilot CLI.
+            </span>
+        </div>
+        <div class="field">
+            <label>Copilot base directory (optional)</label>
+            <div class="loader">
+                <input class="path-input" @bind="draft.CopilotBaseDirectory" @bind:event="oninput"
+                       placeholder="Leave empty to use ~/.copilot" />
+                <button class="btn" @onclick="BrowseBaseDirectoryAsync">Browse…</button>
+            </div>
+            <span class="field-hint muted">
+                Sets <code>COPILOT_HOME</code> for the runtime (session state, config). Blank uses <code>~/.copilot</code>.
+            </span>
+        </div>
+        <div class="field">
+            <label>Agent turn timeout (minutes)</label>
+            <input class="path-input" type="number" min="1" step="1"
+                   @bind="draft.RunTimeoutMinutes" @bind:event="oninput" />
+            <span class="field-hint muted">
+                How long the app waits for a single agent turn to finish — including time spent paused on a tool call —
+                before it stops waiting. Raising this avoids timeouts when you pause the agent. Default is 10.
+            </span>
+        </div>
+        <div class="settings-actions">
+            <button class="btn" @onclick="TestConnectionAsync" disabled="@testing">
+                @(testing ? "Testing…" : "Test connection")
+            </button>
+            @if (testMessage is not null)
+            {
+                <span class="status @(testOk ? "ok-text" : "bad-text")">@testMessage</span>
+            }
+        </div>
+    </div>
+
+    <div class="settings-actions">
+        <button class="btn primary" @onclick="SaveAsync">Save</button>
+        @if (saved)
+        {
+            <span class="status muted">Saved.</span>
+        }
+    </div>
+</section>
+
+@code {
+    private StudioSettings draft = new();
+    private bool saved;
+    private bool testing;
+    private bool testOk;
+    private string? testMessage;
+
+    protected override void OnInitialized()
+        => draft = SettingsService.Current.Clone();
+
+    private async Task BrowseBaseDirectoryAsync()
+    {
+        var picked = await ElectronFilePicker.PickDirectoryAsync("Select the Copilot base directory");
+        if (!string.IsNullOrEmpty(picked))
+        {
+            draft.CopilotBaseDirectory = picked;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task TestConnectionAsync()
+    {
+        testing = true;
+        testMessage = null;
+        var token = draft.ResolveGitHubToken();
+        var baseDir = string.IsNullOrWhiteSpace(draft.CopilotBaseDirectory) ? null : draft.CopilotBaseDirectory;
+        (testOk, testMessage) = await CopilotConnection.TestAsync(token, baseDir);
+        testing = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        await SettingsService.SaveAsync(draft.Clone());
+        saved = true;
+    }
+}

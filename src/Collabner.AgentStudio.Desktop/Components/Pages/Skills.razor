@@ -1,0 +1,152 @@
+@* Copyright © 2026 Collabner. All rights reserved. *@
+
+@page "/skills"
+@rendermode InteractiveServer
+@implements IDisposable
+@using Collabner.AgentStudio.Desktop.Services
+@inject AgentRunState State
+@inject SettingsService SettingsService
+
+<h1>Skills</h1>
+
+<section class="loader">
+    <input class="path-input" @bind="skillsDirectory" @bind:event="oninput" placeholder="Path to a folder of skills" />
+    <button class="btn" @onclick="BrowseSkillsDirectoryAsync" disabled="@State.IsLoadingSkills">Browse…</button>
+    <button class="btn primary" @onclick="LoadSkillsAsync"
+            disabled="@(State.IsLoadingSkills || string.IsNullOrWhiteSpace(skillsDirectory))">
+        @(State.IsLoadingSkills ? "Loading…" : "Load")
+    </button>
+    @if (State.IsLoadingSkills)
+    {
+        <span class="status">Scanning skills…</span>
+    }
+    else if (!string.IsNullOrWhiteSpace(State.SkillsDirectory))
+    {
+        <span class="status muted">@State.SkillsDirectory</span>
+    }
+    else
+    {
+        <span class="status muted">No skills directory — enter a path to a folder of skills and load.</span>
+    }
+</section>
+
+@if (State.SkillsError is not null)
+{
+    <div class="error">@State.SkillsError</div>
+}
+
+@if (State.Skills.Count == 0 && State.SkillsError is null && !State.IsLoadingSkills)
+{
+    <p class="muted">No skills loaded.</p>
+}
+
+<div class="skills-list">
+    @foreach (var skill in State.Skills)
+    {
+        <div class="config-box skill-card">
+            <div class="skill-card-head">
+                <code class="skill-name">@skill.Name</code>
+                <span class="skill-path muted">@skill.Path</span>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(skill.Description))
+            {
+                <div class="skill-desc muted">@skill.Description</div>
+            }
+            <details class="skill-editor">
+                <summary>View / edit full text</summary>
+                <textarea class="prompt-input skill-text" rows="18"
+                          value="@GetDraft(skill)"
+                          @onchange="e => SetDraft(skill, e.Value?.ToString())"></textarea>
+                <div class="prompt-actions">
+                    <button class="btn primary" @onclick="() => SaveAsync(skill)"
+                            disabled="@(!IsDirty(skill))">Save</button>
+                    <button class="btn" @onclick="() => ResetDraft(skill)"
+                            disabled="@(!IsDirty(skill))">Revert</button>
+                    @if (savedPath == skill.Path)
+                    {
+                        <span class="status muted">Saved</span>
+                    }
+                </div>
+            </details>
+        </div>
+    }
+</div>
+
+@code {
+    private readonly Dictionary<string, string> drafts = new();
+    private string? savedPath;
+    private string skillsDirectory = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        skillsDirectory = State.SkillsDirectory ?? string.Empty;
+        State.Changed += OnStateChangedAsync;
+    }
+
+    // Skills are not auto-scanned; they load only when the user clicks Load
+    // (here or on the Project page), so nothing is read until requested.
+
+    private async Task BrowseSkillsDirectoryAsync()
+    {
+        var picked = await ElectronFilePicker.PickDirectoryAsync("Select the skills directory");
+        if (!string.IsNullOrEmpty(picked))
+        {
+            skillsDirectory = picked;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task LoadSkillsAsync()
+    {
+        if (string.IsNullOrWhiteSpace(skillsDirectory))
+        {
+            return;
+        }
+
+        // Persist the directory so the Project and Agent tabs share it as the source of truth.
+        var settings = SettingsService.Current.Clone();
+        settings.SkillsDirectory = skillsDirectory;
+        await SettingsService.SaveAsync(settings);
+
+        await State.LoadSkillsAsync();
+    }
+
+    private string GetDraft(SkillView skill)
+        => drafts.TryGetValue(skill.Path, out var text) ? text : skill.Content;
+
+    private void SetDraft(SkillView skill, string? text)
+    {
+        drafts[skill.Path] = text ?? string.Empty;
+        if (savedPath == skill.Path)
+        {
+            savedPath = null;
+        }
+    }
+
+    private void ResetDraft(SkillView skill)
+    {
+        drafts.Remove(skill.Path);
+        savedPath = null;
+    }
+
+    private bool IsDirty(SkillView skill)
+        => drafts.TryGetValue(skill.Path, out var text) && text != skill.Content;
+
+    private async Task SaveAsync(SkillView skill)
+    {
+        if (!drafts.TryGetValue(skill.Path, out var text))
+        {
+            return;
+        }
+
+        await State.SaveSkillAsync(skill, text);
+        drafts.Remove(skill.Path);
+        savedPath = skill.Path;
+    }
+
+    public void Dispose()
+        => State.Changed -= OnStateChangedAsync;
+
+    private Task OnStateChangedAsync()
+        => InvokeAsync(StateHasChanged);
+}

@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Collabner.AgentStudio.Agent/Collabner.AgentStudio.Agent.csproj" />
+    <Project Path="src/Collabner.McpInspector.Core/Collabner.McpInspector.Core.csproj" />
+    <Project Path="src/Collabner.AgentStudio.Desktop/Collabner.AgentStudio.Desktop.csproj" />
+  </Folder>
+</Solution>

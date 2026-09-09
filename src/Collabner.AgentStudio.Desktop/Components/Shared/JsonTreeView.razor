@@ -1,0 +1,85 @@
+@* Copyright © 2026 Collabner. All rights reserved. *@
+
+@using System.Text.Json.Nodes
+
+@if (Node is JsonObject obj)
+{
+    <details class="tree-node" open="@Open">
+        <summary>
+            <span class="tree-key">@Label</span>
+            <span class="tree-meta">{ } @obj.Count</span>
+        </summary>
+        <ul class="tree-children">
+            @foreach (var kvp in obj)
+            {
+                <li><JsonTreeView Node="kvp.Value" Name="@kvp.Key" /></li>
+            }
+        </ul>
+    </details>
+}
+else if (Node is JsonArray arr)
+{
+    <details class="tree-node" open="@Open">
+        <summary>
+            <span class="tree-key">@Label</span>
+            <span class="tree-meta">[ ] @arr.Count</span>
+        </summary>
+        <ul class="tree-children">
+            @{
+                var index = 0;
+            }
+            @foreach (var item in arr)
+            {
+                var currentIndex = index++;
+                <li><JsonTreeView Node="item" Name="@GetItemLabel(item, currentIndex)" /></li>
+            }
+        </ul>
+    </details>
+}
+else
+{
+    <div class="tree-leaf">
+        <span class="tree-key">@Label</span>
+        <span class="tree-value @ValueCssClass">@ValueText</span>
+    </div>
+}
+
+@code {
+    [Parameter] public JsonNode? Node { get; set; }
+
+    [Parameter] public string? Name { get; set; }
+
+    [Parameter] public bool Open { get; set; }
+
+    private string Label => string.IsNullOrEmpty(Name) ? string.Empty : $"{Name}";
+
+    private string ValueText => Node?.ToJsonString() ?? "null";
+
+    private string ValueCssClass => Node switch
+    {
+        null => "is-null",
+        JsonValue value when value.TryGetValue<string>(out _) => "is-string",
+        JsonValue value when value.TryGetValue<bool>(out _) => "is-bool",
+        JsonValue => "is-number",
+        _ => string.Empty,
+    };
+
+    private static string GetItemLabel(JsonNode? item, int index)
+    {
+        if (item is JsonObject itemObj)
+        {
+            foreach (var key in new[] { "name", "title", "id", "key" })
+            {
+                if (itemObj.TryGetPropertyValue(key, out var value)
+                    && value is JsonValue jsonValue
+                    && jsonValue.TryGetValue<string>(out var text)
+                    && !string.IsNullOrWhiteSpace(text))
+                {
+                    return $"[{index}] {text}";
+                }
+            }
+        }
+
+        return index.ToString();
+    }
+}

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Collabner.AgentStudio.Desktop</RootNamespace>
+    <AssemblyName>Collabner.AgentStudio.Desktop</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ElectronNET.API" Version="23.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Collabner.AgentStudio.Agent\Collabner.AgentStudio.Agent.csproj" />
+    <ProjectReference Include="..\Collabner.McpInspector.Core\Collabner.McpInspector.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,230 @@
+@* Copyright © 2026 Collabner. All rights reserved. *@
+
+@page "/"
+@rendermode InteractiveServer
+@using Collabner.AgentStudio.Agent
+@using Collabner.AgentStudio.Desktop.Services
+@implements IDisposable
+@inject SettingsService SettingsService
+@inject InspectorState Inspector
+@inject AgentRunState Agent
+
+<h1>Project</h1>
+
+<div class="project-layout">
+<section class="settings-form">
+    <div class="settings-section">
+        <h2 class="settings-heading">Agent Directory</h2>
+        <div class="field">
+            <label>Base directory</label>
+            <div class="loader">
+                <input class="path-input" @bind="agentDirectory" @bind:event="oninput" placeholder="Path to the agent's base directory" />
+                <button class="btn" @onclick="BrowseAgentDirectoryAsync" disabled="@loadingServers">Browse…</button>
+                <button class="btn primary" @onclick="LoadAgentDirectoryAsync" disabled="@(loadingServers || string.IsNullOrWhiteSpace(agentDirectory))">
+                    @if (loadingServers)
+                    {
+                        <span class="btn-spinner" aria-hidden="true"></span>
+                        <span>Loading…</span>
+                    }
+                    else
+                    {
+                        <span>Load</span>
+                    }
+                </button>
+            </div>
+            <span class="field-hint muted">Base directory for the agent being built in the studio. A <code>.mcp.json</code> found here is loaded automatically.</span>
+            @if (loadingServers)
+            {
+                <div class="load-progress" role="status" aria-live="polite">
+                    <div class="spinner-wheel" aria-hidden="true"></div>
+                    <div class="load-text">
+                        <span class="load-title">Loading…</span>
+                        <span class="load-sub">Reading files and starting MCP servers.</span>
+                    </div>
+                </div>
+            }
+            @if (dirStatus is not null)
+            {
+                <span class="status @(dirOk ? "ok-text" : "bad-text")">@dirStatus</span>
+            }
+        </div>
+    </div>
+
+    <div class="settings-section">
+        <h2 class="settings-heading">System Prompt</h2>
+        <div class="field">
+            <label>systemprompt.md</label>
+            <textarea class="prompt-input" rows="12" @bind="Agent.SystemPrompt" @bind:event="oninput"
+                      placeholder="Leave empty to use GitHub Copilot's own prompt. Saved to systemprompt.md in the agent directory."></textarea>
+            <span class="field-hint muted">
+                @if (Agent.SystemPromptDirty)
+                {
+                    <text>Unsaved — click Save to write systemprompt.md and apply on the next run.</text>
+                }
+                else if (Agent.SystemPromptOverride)
+                {
+                    <text>Saved — this replaces Copilot's built-in prompt on each run.</text>
+                }
+                else
+                {
+                    <text>Using Copilot's built-in prompt. Edit and Save to override it.</text>
+                }
+            </span>
+            <div class="settings-actions">
+                <button class="btn primary" @onclick="SaveSystemPromptAsync" disabled="@(!Agent.SystemPromptDirty)">Save</button>
+                @if (promptSaved && !Agent.SystemPromptDirty)
+                {
+                    <span class="status muted">Saved.</span>
+                }
+            </div>
+        </div>
+    </div>
+</section>
+
+<aside class="project-side">
+    <div class="settings-section">
+        <h2 class="settings-heading">Summary</h2>
+        <div class="field">
+            @if (Agent.IsSummarizingPrompt)
+            {
+                <div class="load-progress" role="status" aria-live="polite">
+                    <div class="spinner-wheel" aria-hidden="true"></div>
+                    <div class="load-text">
+                        <span class="load-title">Summarizing…</span>
+                        <span class="load-sub">Asking Copilot to summarize the system prompt.</span>
+                    </div>
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(Agent.SummaryError))
+            {
+                <span class="status bad-text">@Agent.SummaryError</span>
+            }
+            else if (!string.IsNullOrWhiteSpace(Agent.SystemPromptSummary))
+            {
+                <p class="summary-text">@Agent.SystemPromptSummary</p>
+            }
+            else
+            {
+                <span class="field-hint muted">No summary yet. Load or Save a non-empty system prompt to generate one.</span>
+            }
+        </div>
+    </div>
+</aside>
+</div>
+
+@code {
+    private string agentDirectory = string.Empty;
+    private string mcpConfigPath = string.Empty;
+    private string skillsDirectory = string.Empty;
+    private bool loadingServers;
+    private bool loadOk;
+    private string? loadStatus;
+    private bool dirOk;
+    private string? dirStatus;
+    private bool promptSaved;
+    protected override void OnInitialized()
+    {
+        agentDirectory = SettingsService.Current.AgentDirectory ?? string.Empty;
+        mcpConfigPath = SettingsService.Current.DefaultMcpConfigPath ?? string.Empty;
+        skillsDirectory = SettingsService.Current.SkillsDirectory ?? string.Empty;
+        Agent.Changed += OnStateChangedAsync;
+    }
+
+    public void Dispose()
+        => Agent.Changed -= OnStateChangedAsync;
+
+    private Task OnStateChangedAsync()
+        => InvokeAsync(StateHasChanged);
+
+    private async Task SaveSystemPromptAsync()
+    {
+        await Agent.SaveSystemPromptAsync();
+        promptSaved = true;
+    }
+
+    private async Task BrowseAgentDirectoryAsync()
+    {
+        var picked = await ElectronFilePicker.PickDirectoryAsync("Select the agent base directory");
+        if (!string.IsNullOrEmpty(picked))
+        {
+            agentDirectory = picked;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task LoadAgentDirectoryAsync()
+    {
+        dirStatus = null;
+        var dir = agentDirectory?.Trim();
+        if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+        {
+            dirOk = false;
+            dirStatus = $"Directory not found: {dir}";
+            return;
+        }
+
+        var settings = SettingsService.Current.Clone();
+        settings.AgentDirectory = dir;
+
+        // Ensure the conventional .github\skills folder exists and point the Skills box at it.
+        var skillsDir = Path.Combine(dir, ".github", "skills");
+        Directory.CreateDirectory(skillsDir);
+        skillsDirectory = skillsDir;
+        settings.SkillsDirectory = skillsDir;
+
+        var mcpFile = Path.Combine(dir, ".mcp.json");
+        if (File.Exists(mcpFile))
+        {
+            mcpConfigPath = mcpFile;
+            settings.DefaultMcpConfigPath = mcpFile;
+            await SettingsService.SaveAsync(settings);
+            await LoadServersAsync();
+            dirOk = loadOk;
+            dirStatus = loadOk
+                ? $"Loaded .mcp.json from {dir}."
+                : "Agent directory saved, but loading .mcp.json failed.";
+        }
+        else
+        {
+            await SettingsService.SaveAsync(settings);
+            dirOk = true;
+            dirStatus = $"Agent directory saved. No .mcp.json found in {dir}.";
+        }
+
+        // Load the system prompt and skills saved alongside the agent, if present.
+        await Agent.LoadSystemPromptFromDirectoryAsync();
+        await Agent.LoadSkillsAsync();
+        await Agent.RefreshSystemPromptSummaryAsync();
+    }
+
+    private async Task LoadServersAsync()
+    {
+        loadingServers = true;
+        loadStatus = null;
+        await InvokeAsync(StateHasChanged); // show the spinner before the blocking work starts
+
+        // Persist the path so the Inspector and Agent tabs share it as the source of truth.
+        var settings = SettingsService.Current.Clone();
+        settings.DefaultMcpConfigPath = mcpConfigPath;
+        if (!string.IsNullOrWhiteSpace(agentDirectory))
+        {
+            settings.AgentDirectory = agentDirectory;
+        }
+        await SettingsService.SaveAsync(settings);
+
+        Agent.McpConfigPath = string.IsNullOrWhiteSpace(mcpConfigPath) ? ".mcp.json" : mcpConfigPath;
+        await Inspector.LoadAsync(Agent.McpConfigPath);
+        await Agent.LoadServersAsync();
+
+        var errors = new[] { Inspector.LoadError, Agent.LoadError }
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Distinct()
+            .ToArray();
+
+        loadOk = errors.Length == 0;
+        loadStatus = loadOk
+            ? $"Loaded {Inspector.Servers.Count} server{(Inspector.Servers.Count == 1 ? "" : "s")}."
+            : string.Join(" ", errors);
+        loadingServers = false;
+    }
+}

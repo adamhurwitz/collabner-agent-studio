@@ -1,0 +1,36 @@
+{
+  "executable": "Collabner.AgentStudio.Desktop",
+  "splashscreen": {
+    "imageFile": ""
+  },
+  "name": "collabner-agent-studio",
+  "author": "Collabner",
+  "singleInstance": false,
+  "environment": "Production",
+  "electronPort": null,
+  "build": {
+    "appId": "com.collabner.agentstudio",
+    "productName": "Collabner Agent Studio",
+    "copyright": "Copyright © Collabner",
+    "buildVersion": "0.1.0",
+    "compression": "maximum",
+    "directories": {
+      "output": "../../bin/Desktop"
+    },
+    "extraResources": [
+      {
+        "from": "./bin",
+        "to": "bin",
+        "filter": [ "**/*" ]
+      }
+    ],
+    "files": [
+      {
+        "from": "./bin",
+        "to": "bin",
+        "filter": [ "**/*" ]
+      },
+      "**/*"
+    ]
+  }
+}

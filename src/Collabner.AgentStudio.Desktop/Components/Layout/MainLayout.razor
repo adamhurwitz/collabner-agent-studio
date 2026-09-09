@@ -1,0 +1,29 @@
+@* Copyright © 2026 Collabner. All rights reserved. *@
+
+@inherits LayoutComponentBase
+
+<div class="studio">
+    <header class="studio-header">
+        <div class="studio-brand">
+            <span class="studio-logo">◆</span>
+            <span>Collabner <span class="studio-brand-accent">Agent Studio</span></span>
+        </div>
+        <nav class="studio-tabs">
+            <NavLink class="studio-tab" href="" Match="NavLinkMatch.All">Project</NavLink>
+            <NavLink class="studio-tab" href="inspector">MCP</NavLink>
+            <NavLink class="studio-tab" href="skills">Skills</NavLink>
+            <NavLink class="studio-tab" href="agent">Agent</NavLink>
+            <NavLink class="studio-tab" href="evals">Evals</NavLink>
+            <NavLink class="studio-tab" href="prod">Prod</NavLink>
+        </nav>
+        <NavLink class="studio-settings" href="settings" title="Settings">
+            <span class="studio-gear">⚙</span>
+            <span>Settings</span>
+        </NavLink>
+    </header>
+    <main class="studio-body">
+        <div class="studio-content">
+            @Body
+        </div>
+    </main>
+</div>

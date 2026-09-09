@@ -1,0 +1,714 @@
+@* Copyright © 2026 Collabner. All rights reserved. *@
+
+@page "/inspector"
+@rendermode InteractiveServer
+@implements IDisposable
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using Collabner.McpInspector.Mcp
+@using Collabner.AgentStudio.Desktop.Services
+@using Collabner.McpInspector.Wire
+@using ModelContextProtocol.Protocol
+@inject InspectorState State
+@inject SettingsService SettingsService
+@inject AgentRunState Agent
+
+<h1>MCP Inspector</h1>
+
+<section class="loader">
+    <input class="path-input" @bind="mcpConfigPath" @bind:event="oninput" placeholder=".mcp.json" />
+    <button class="btn" @onclick="BrowseMcpAsync" disabled="@State.IsLoading">Browse…</button>
+    <button class="btn primary" @onclick="LoadServersAsync" disabled="@(State.IsLoading || string.IsNullOrWhiteSpace(mcpConfigPath))">
+        @(State.IsLoading ? "Loading…" : "Load")
+    </button>
+    @if (State.IsLoading)
+    {
+        <span class="status">Connecting to servers…</span>
+    }
+    else if (State.ConfigPath is not null)
+    {
+        <span class="status muted">@State.ConfigPath</span>
+    }
+    else
+    {
+        <span class="status muted">No servers loaded — enter a path to an <code>.mcp.json</code> file and load.</span>
+    }
+</section>
+
+@if (State.LoadError is not null)
+{
+    <div class="error">@State.LoadError</div>
+}
+
+@if (State.Servers.Count > 0)
+{
+    <nav class="server-tabs" role="tablist">
+        @for (var i = 0; i < State.Servers.Count; i++)
+        {
+            var index = i;
+            var server = State.Servers[index];
+            <button type="button"
+                    class="server-tab @(index == selectedServer ? "active" : "")"
+                    @onclick="() => SelectServer(index)">
+                @server.ServerName
+                @if (server.Status == ServerLoadStatus.Loading)
+                {
+                    <span class="tab-spinner" title="Loading…"></span>
+                }
+                else if (server.Status == ServerLoadStatus.Pending)
+                {
+                    <span class="warn muted" title="Waiting to load">…</span>
+                }
+                else if (!server.IsConnected)
+                {
+                    <span class="warn" title="@server.Error">⚠</span>
+                }
+            </button>
+        }
+    </nav>
+
+    var current = State.Servers[selectedServer];
+
+    <div class="server-panel">
+        <div class="vtabs" role="tablist">
+            <button type="button"
+                    class="vtab @(view == View.Discovery ? "active" : "")"
+                    @onclick="() => view = View.Discovery">
+                Discovery
+            </button>
+            <button type="button"
+                    class="vtab @(view == View.Invocation ? "active" : "")"
+                    @onclick="() => view = View.Invocation">
+                Invocation
+            </button>
+            <button type="button"
+                    class="vtab @(view == View.Objects ? "active" : "")"
+                    @onclick="() => view = View.Objects">
+                Objects
+            </button>
+        </div>
+
+        <div class="vcontent">
+            @if (!current.IsLoaded)
+            {
+                <div class="loading-panel">
+                    <div class="progress-bar @(current.Status == ServerLoadStatus.Loading ? "active" : "")">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <p class="muted">
+                        @(current.Status == ServerLoadStatus.Loading
+                            ? $"Connecting to {current.ServerName}…"
+                            : $"Waiting to connect to {current.ServerName}…")
+                    </p>
+                </div>
+            }
+            else
+            {
+                @if (current.Error is not null)
+                {
+                    <div class="error">@current.Error</div>
+                }
+
+                @if (view == View.Discovery)
+                {
+                    @if (current.Session.Count == 0)
+                    {
+                        <p class="muted">No wire messages were captured for this server.</p>
+                    }
+                    else
+                    {
+                        @foreach (var message in current.Session)
+                        {
+                            <div class="wire-message @(message.Direction == "REQUEST" ? "request" : "response")">
+                                <div class="wire-header">
+                                    <span class="wire-direction">@message.Direction</span>
+                                    <span class="wire-time muted">@message.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                </div>
+                                <pre class="wire-body">@message.Payload</pre>
+                            </div>
+                        }
+                    }
+                }
+                else if (view == View.Invocation)
+                {
+                    @if (current.IsConnected)
+                    {
+                        <section class="invoker">
+                            <div class="invoker-row">
+                                <label>Request</label>
+                                <select class="invoker-select" value="@invokeKind" @onchange="OnKindChanged">
+                                    <option value="@InvocationKind.Tool">Tool (tools/call)</option>
+                                    <option value="@InvocationKind.Resource">Resource (resources/read)</option>
+                                    <option value="@InvocationKind.Prompt">Prompt (prompts/get)</option>
+                                </select>
+
+                                <select class="invoker-select" value="@selectedName" @onchange="e => OnSelectionChanged(current, e.Value?.ToString())">
+                                    <option value="">— choose @invokeKind.ToString().ToLowerInvariant() —</option>
+                                    @foreach (var name in NamesFor(current))
+                                    {
+                                        <option value="@name">@name</option>
+                                    }
+                                </select>
+                            </div>
+
+                            @if (SelectedDescription(current) is { Length: > 0 } description)
+                            {
+                                <p class="invoker-desc muted">@description</p>
+                            }
+
+                            @if (invokeKind == InvocationKind.Resource)
+                            {
+                                @if (!string.IsNullOrEmpty(selectedName))
+                                {
+                                    <div class="param-row">
+                                        <label class="param-label">uri <span class="req" title="required">*</span></label>
+                                        <input class="param-input @(missing.Contains("uri") ? "invalid" : "")"
+                                               value="@resourceUri"
+                                               @onchange="e => resourceUri = e.Value?.ToString() ?? string.Empty" />
+                                    </div>
+                                }
+                            }
+                            else if (!string.IsNullOrEmpty(selectedName))
+                            {
+                                @if (currentFields.Count == 0)
+                                {
+                                    <p class="muted">This @invokeKind.ToString().ToLowerInvariant() takes no parameters.</p>
+                                }
+                                else
+                                {
+                                    @foreach (var field in currentFields)
+                                    {
+                                        <div class="param-row">
+                                            <label class="param-label">
+                                                @field.Name
+                                                @if (field.Required)
+                                                {
+                                                    <span class="req" title="required">*</span>
+                                                }
+                                                @if (field.Type is not null)
+                                                {
+                                                    <span class="param-type muted">@field.Type</span>
+                                                }
+                                            </label>
+                                            @if (field.EnumValues is { Count: > 0 })
+                                            {
+                                                <select class="param-input @(missing.Contains(field.Name) ? "invalid" : "")"
+                                                        value="@GetArg(field.Name)"
+                                                        @onchange="e => SetArg(field.Name, e.Value?.ToString())">
+                                                    <option value="">@(field.Description ?? "— choose a value —")</option>
+                                                    @foreach (var option in field.EnumValues)
+                                                    {
+                                                        <option value="@option">@option</option>
+                                                    }
+                                                </select>
+                                            }
+                                            else
+                                            {
+                                                <input class="param-input @(missing.Contains(field.Name) ? "invalid" : "")"
+                                                       placeholder="@(field.Description ?? string.Empty)"
+                                                       value="@GetArg(field.Name)"
+                                                       @onchange="e => SetArg(field.Name, e.Value?.ToString())" />
+                                            }
+                                        </div>
+                                    }
+                                }
+                            }
+
+                            @if (invokeKind == InvocationKind.Resource ? !string.IsNullOrEmpty(resourceUri) : !string.IsNullOrEmpty(selectedName))
+                            {
+                                <div class="invoker-actions">
+                                    <button class="btn primary" @onclick="() => SendAsync(current)" disabled="@isSending">
+                                        @(isSending ? "Sending…" : "Send request")
+                                    </button>
+                                </div>
+
+                                <details class="invoker-preview">
+                                    <summary>JSON-RPC request preview</summary>
+                                    <pre class="wire-body">@BuildPreview()</pre>
+                                </details>
+                            }
+
+                            @if (sendError is not null)
+                            {
+                                <div class="error">@sendError</div>
+                            }
+                        </section>
+
+                        @if (lastExchange.Count > 0)
+                        {
+                            <div class="invoker-result">
+                                <div class="invoker-result-title muted">Result</div>
+                                @foreach (var message in lastExchange)
+                                {
+                                    <div class="wire-message @(message.Direction == "REQUEST" ? "request" : "response")">
+                                        <div class="wire-header">
+                                            <span class="wire-direction">@message.Direction</span>
+                                            <span class="wire-time muted">@message.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                        </div>
+                                        <pre class="wire-body">@message.Payload</pre>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <p class="muted">Connect to this server to send invocations.</p>
+                    }
+                }
+                else
+                {
+                    var tree = BuildObjectsTree(current);
+                    @if (tree is null)
+                    {
+                        <p class="muted">No objects are available for this server.</p>
+                    }
+                    else
+                    {
+                        <div class="tree-root">
+                            <JsonTreeView Node="tree" Name="objects" Open="true" />
+                        </div>
+                    }
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private enum View
+    {
+        Discovery,
+        Invocation,
+        Objects,
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private int selectedServer;
+    private View view = View.Discovery;
+    private string mcpConfigPath = string.Empty;
+    // Invocation composer state.
+    private InvocationKind invokeKind = InvocationKind.Tool;
+    private string? selectedName;
+    private string resourceUri = string.Empty;
+    private readonly Dictionary<string, string?> argValues = new(StringComparer.Ordinal);
+    private List<ParamField> currentFields = [];
+    private readonly HashSet<string> missing = new(StringComparer.Ordinal);
+    private bool isSending;
+    private string? sendError;
+    private List<WireMessage> lastExchange = [];
+
+    protected override void OnInitialized()
+    {
+        mcpConfigPath = State.ConfigPath ?? SettingsService.Current.DefaultMcpConfigPath ?? string.Empty;
+        State.Changed += OnStateChangedAsync;
+    }
+
+    public void Dispose()
+    {
+        State.Changed -= OnStateChangedAsync;
+    }
+
+    private Task OnStateChangedAsync()
+        => InvokeAsync(StateHasChanged);
+
+    private async Task BrowseMcpAsync()
+    {
+        var picked = await ElectronFilePicker.PickMcpJsonAsync();
+        if (!string.IsNullOrEmpty(picked))
+        {
+            mcpConfigPath = picked;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task LoadServersAsync()
+    {
+        if (string.IsNullOrWhiteSpace(mcpConfigPath))
+        {
+            return;
+        }
+
+        // Persist the path so the Project and Agent tabs share it as the source of truth.
+        var settings = SettingsService.Current.Clone();
+        settings.DefaultMcpConfigPath = mcpConfigPath;
+        await SettingsService.SaveAsync(settings);
+
+        selectedServer = 0;
+        view = View.Discovery;
+        ResetInvoker();
+
+        Agent.McpConfigPath = mcpConfigPath;
+        await State.LoadAsync(mcpConfigPath);
+        await Agent.LoadServersAsync();
+    }
+
+    private void SelectServer(int index)
+    {
+        selectedServer = index;
+        view = View.Discovery;
+        ResetInvoker();
+    }
+
+    private static JsonNode? BuildObjectsTree(ServerInspectionView server)
+    {
+        if (!server.IsConnected)
+        {
+            return null;
+        }
+
+        var payload = new
+        {
+            tools = server.Tools,
+            resources = server.Resources,
+            prompts = server.Prompts,
+        };
+
+        var json = JsonSerializer.Serialize(payload, JsonOptions);
+        return JsonNode.Parse(json);
+    }
+
+    // --- Invocation composer ---
+
+    private enum InvocationKind
+    {
+        Tool,
+        Resource,
+        Prompt,
+    }
+
+    private sealed record ParamField(string Name, string? Type, string? Description, bool Required, IReadOnlyList<string>? EnumValues = null);
+
+    private void ResetInvoker()
+    {
+        invokeKind = InvocationKind.Tool;
+        selectedName = null;
+        resourceUri = string.Empty;
+        argValues.Clear();
+        currentFields = [];
+        missing.Clear();
+        sendError = null;
+        lastExchange = [];
+    }
+
+    private void OnKindChanged(ChangeEventArgs e)
+    {
+        invokeKind = Enum.TryParse<InvocationKind>(e.Value?.ToString(), out var kind)
+            ? kind
+            : InvocationKind.Tool;
+        selectedName = null;
+        resourceUri = string.Empty;
+        argValues.Clear();
+        currentFields = [];
+        missing.Clear();
+        sendError = null;
+        lastExchange = [];
+    }
+
+    private void OnSelectionChanged(ServerInspectionView server, string? name)
+    {
+        selectedName = string.IsNullOrEmpty(name) ? null : name;
+        argValues.Clear();
+        currentFields = [];
+        resourceUri = string.Empty;
+        missing.Clear();
+        sendError = null;
+        lastExchange = [];
+
+        if (selectedName is null)
+        {
+            return;
+        }
+
+        switch (invokeKind)
+        {
+            case InvocationKind.Tool:
+                var tool = server.Tools.FirstOrDefault(t => t.Name == selectedName);
+                if (tool is not null)
+                {
+                    currentFields = GetToolFields(tool);
+                }
+                break;
+
+            case InvocationKind.Resource:
+                var resource = server.Resources.FirstOrDefault(r => r.Name == selectedName);
+                resourceUri = resource?.Uri ?? string.Empty;
+                break;
+
+            case InvocationKind.Prompt:
+                var prompt = server.Prompts.FirstOrDefault(p => p.Name == selectedName);
+                if (prompt?.Arguments is not null)
+                {
+                    currentFields = prompt.Arguments
+                        .Select(a => new ParamField(a.Name, "string", a.Description, a.Required ?? false))
+                        .ToList();
+                }
+                break;
+        }
+
+        foreach (var field in currentFields)
+        {
+            argValues[field.Name] = string.Empty;
+        }
+    }
+
+    private IEnumerable<string> NamesFor(ServerInspectionView server) => invokeKind switch
+    {
+        InvocationKind.Tool => server.Tools.Select(t => t.Name),
+        InvocationKind.Resource => server.Resources.Select(r => r.Name),
+        InvocationKind.Prompt => server.Prompts.Select(p => p.Name),
+        _ => [],
+    };
+
+    private string? SelectedDescription(ServerInspectionView server)
+    {
+        if (selectedName is null)
+        {
+            return null;
+        }
+
+        return invokeKind switch
+        {
+            InvocationKind.Tool => server.Tools.FirstOrDefault(t => t.Name == selectedName)?.Description,
+            InvocationKind.Resource => server.Resources.FirstOrDefault(r => r.Name == selectedName)?.Description,
+            InvocationKind.Prompt => server.Prompts.FirstOrDefault(p => p.Name == selectedName)?.Description,
+            _ => null,
+        };
+    }
+
+    private string GetArg(string name)
+        => argValues.TryGetValue(name, out var value) ? value ?? string.Empty : string.Empty;
+
+    private void SetArg(string name, string? value)
+        => argValues[name] = value;
+
+    private static List<ParamField> GetToolFields(Tool tool)
+    {
+        var fields = new List<ParamField>();
+        var schema = tool.InputSchema;
+        if (schema.ValueKind != JsonValueKind.Object)
+        {
+            return fields;
+        }
+
+        var required = new HashSet<string>(StringComparer.Ordinal);
+        if (schema.TryGetProperty("required", out var req) && req.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in req.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                {
+                    required.Add(item.GetString()!);
+                }
+            }
+        }
+
+        if (schema.TryGetProperty("properties", out var props) && props.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in props.EnumerateObject())
+            {
+                string? type = null;
+                string? description = null;
+                List<string>? enumValues = null;
+                if (prop.Value.ValueKind == JsonValueKind.Object)
+                {
+                    if (prop.Value.TryGetProperty("type", out var t))
+                    {
+                        type = t.ValueKind == JsonValueKind.String ? t.GetString() : t.ToString();
+                    }
+
+                    if (prop.Value.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String)
+                    {
+                        description = d.GetString();
+                    }
+
+                    if (prop.Value.TryGetProperty("enum", out var e) && e.ValueKind == JsonValueKind.Array)
+                    {
+                        enumValues = e.EnumerateArray()
+                            .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString()! : item.ToString())
+                            .ToList();
+                    }
+                }
+
+                fields.Add(new ParamField(prop.Name, type, description, required.Contains(prop.Name), enumValues));
+            }
+        }
+
+        return fields;
+    }
+
+    private static object? ConvertValue(string raw, string? type) => type switch
+    {
+        "number" => double.TryParse(raw, out var d) ? d : raw,
+        "integer" => long.TryParse(raw, out var l) ? l : raw,
+        "boolean" => bool.TryParse(raw, out var b) ? b : raw,
+        "array" or "object" => TryParseJson(raw),
+        _ => raw,
+    };
+
+    private static object? TryParseJson(string raw)
+    {
+        try
+        {
+            return JsonNode.Parse(raw);
+        }
+        catch
+        {
+            return raw;
+        }
+    }
+
+    private Dictionary<string, object?> BuildToolArguments()
+    {
+        var args = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var field in currentFields)
+        {
+            var raw = GetArg(field.Name);
+            if (string.IsNullOrEmpty(raw))
+            {
+                continue;
+            }
+
+            args[field.Name] = ConvertValue(raw, field.Type);
+        }
+
+        return args;
+    }
+
+    private Dictionary<string, object?> BuildPromptArguments()
+    {
+        var args = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var field in currentFields)
+        {
+            var raw = GetArg(field.Name);
+            if (!string.IsNullOrEmpty(raw))
+            {
+                args[field.Name] = raw;
+            }
+        }
+
+        return args;
+    }
+
+    private bool ValidateRequired()
+    {
+        missing.Clear();
+        if (invokeKind == InvocationKind.Resource)
+        {
+            if (string.IsNullOrWhiteSpace(resourceUri))
+            {
+                missing.Add("uri");
+            }
+        }
+        else
+        {
+            foreach (var field in currentFields)
+            {
+                if (field.Required && string.IsNullOrWhiteSpace(GetArg(field.Name)))
+                {
+                    missing.Add(field.Name);
+                }
+            }
+        }
+
+        return missing.Count == 0;
+    }
+
+    private string BuildPreview()
+    {
+        JsonNode? paramsNode;
+        string method;
+        switch (invokeKind)
+        {
+            case InvocationKind.Resource:
+                method = "resources/read";
+                paramsNode = new JsonObject { ["uri"] = resourceUri };
+                break;
+            case InvocationKind.Prompt:
+                method = "prompts/get";
+                paramsNode = new JsonObject
+                {
+                    ["name"] = selectedName,
+                    ["arguments"] = JsonSerializer.SerializeToNode(BuildPromptArguments(), JsonOptions),
+                };
+                break;
+            default:
+                method = "tools/call";
+                paramsNode = new JsonObject
+                {
+                    ["name"] = selectedName,
+                    ["arguments"] = JsonSerializer.SerializeToNode(BuildToolArguments(), JsonOptions),
+                };
+                break;
+        }
+
+        var request = new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = 0,
+            ["method"] = method,
+            ["params"] = paramsNode,
+        };
+
+        return request.ToJsonString(JsonOptions);
+    }
+
+    private async Task SendAsync(ServerInspectionView server)
+    {
+        sendError = null;
+
+        if (server.Connection is null || !server.IsConnected)
+        {
+            sendError = "The server is not connected.";
+            return;
+        }
+
+        if (invokeKind != InvocationKind.Resource && string.IsNullOrEmpty(selectedName))
+        {
+            sendError = $"Choose a {invokeKind.ToString().ToLowerInvariant()} to invoke.";
+            return;
+        }
+
+        if (!ValidateRequired())
+        {
+            sendError = "Fill in the required fields (marked with *).";
+            return;
+        }
+
+        var before = 0;
+        try
+        {
+            isSending = true;
+            before = server.Session.Count;
+            switch (invokeKind)
+            {
+                case InvocationKind.Tool:
+                    await server.Connection.CallToolAsync(selectedName!, BuildToolArguments());
+                    break;
+                case InvocationKind.Resource:
+                    await server.Connection.ReadResourceAsync(resourceUri.Trim());
+                    break;
+                case InvocationKind.Prompt:
+                    await server.Connection.GetPromptAsync(selectedName!, BuildPromptArguments());
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            // The wire log still captures the request and any error response; also surface it here.
+            sendError = ex.Message;
+        }
+        finally
+        {
+            // Surface just this invocation's request/response under the form; the full
+            // wire log remains available on the Discovery tab.
+            lastExchange = server.Session.Skip(before).ToList();
+            isSending = false;
+        }
+    }
+}
