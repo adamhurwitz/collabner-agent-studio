@@ -3,6 +3,11 @@
 Collabner Agent Studio is a cross-platform desktop app for building Agents using the GitHub Copilot SDK for a harness. It has tabs for Project, MCP, SKILLs, and Agent with Evals and Prod coming soon. You begin by pointing the Project to an Agent Directory and loading its files or creating them. The files define the agent: SystemPrompt.md, a skills directory, and a .mcp.json file. The Agent Studio lets you test and edit your files to get the behavior you want for your agent. 
 
 
+![Agent Page](images/AgentPage.png)
+
+
+
+
 ### Features
 
 **MCP Inspector**
@@ -29,7 +34,7 @@ Collabner Agent Studio is a cross-platform desktop app for building Agents using
 **Sessions & auth**
 
 - Session storage is kept separate from the CLI so desktop and command-line runs don't collide.
-- Authenticate using a GitHub token and the logged-in user for Copilot access.
+- Authenticate using a GitHub token for Copilot access with separate session directory.
 
 
 The toolkit ships as a **Desktop** app – a Blazor + [Electron.NET](https://github.com/ElectronNET/Electron.NET) application (Collabner Agent Studio) with Project, MCP, SKILLs, Agent, and Settings tabs.
@@ -47,7 +52,21 @@ The toolkit ships as a **Desktop** app – a Blazor + [Electron.NET](https://git
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - [Node.js](https://nodejs.org/) and the Electron.NET CLI (`dotnet tool install ElectronNET.CLI -g`) — only needed to run or package the desktop app under Electron.
 
-## Configuration
+
+## Getting Started
+
+On the Project tab, select a directory that has the following: 
+- systemprompt.md 
+- .mcp.json file
+- .github/skills/ directory 
+
+On the Settings tab, 
+- share a GitHub token with Copilot Requests permission
+- Set the Session Directory, you will want this separate from default sessions directory used by CLI
+
+
+
+## MCP Configuration
 
 The desktop app reads a standard MCP configuration file. Server entries can live under either a `servers` or `mcpServers` key.
 
